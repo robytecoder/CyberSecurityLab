@@ -1,8 +1,8 @@
-# Oopsie Write-up
+# **Oopsie Write-up**
 
 ![Photo of Cover](images/cover.png)
 
-## Introduction
+## **Introduction**
 
 The HTB **Oopsie** machine serves as the target for the assessment, focusing on gaining access to both user and root flags.
 
@@ -14,7 +14,7 @@ The threat model revolves around a known target IP, allowing communication with 
 
 During web assessments, especially those that involve authentication mechanisms, it is crucial to examine cookies, sessions, and access control thoroughly. Often, gaining access or achieving Remote Code Execution involves chaining multiple vulnerabilities together, rather than relying on a single exploit.
 
-## Reconaissance
+## **Reconaissance**
 
 The reconnaissance phase begins with enumeration: a port scan of the victim’s IP address is performed using the Nmap tool to gather useful information, such as open ports, active services and their versions.
 
@@ -29,7 +29,7 @@ The Nmap scan reveals that the target system has two open ports: SSH on port 22 
 - SSH is running OpenSSH 7.6p1 on an Ubuntu-based system, suggesting remote management and shell access are enabled.
 - Apache HTTP Server 2.4.29 is running on port 80, indicating a web server is present, also likely hosted on Ubuntu.
 
-## Discovery
+## **Discovery**
 
 The next step is to visit the target IP in a web browser to gather additional information about the web server and its content.
 
@@ -51,7 +51,7 @@ With Burp Suite set to intercept _off_ (passive mode), refreshing the homepage a
 
 The site map reveals the presence of a `/cdn/cgi/login/script.js` file.
 
-## Initial Access
+## **Initial Access**
 
 Accessing the URL `http://{TARGET_IP}/cdn-cgi/login` leads to a login page that includes a _Login as Guest_ button. By logging in as a guest, it becomes possible to access the _Repair Management System_ page, which contains a navigation menu:
 
@@ -62,7 +62,7 @@ Accessing the URL `http://{TARGET_IP}/cdn-cgi/login` leads to a login page that 
 
 Note that the `user` and `role` cookie parameters correspond to the _Access ID_ and _Name_ fields found on the guest _Account_ page.
 
-## Priviledge Escalation
+## **Priviledge Escalation**
 
 The query string in the _Account_ page URL contains a numeric `id` parameter. Modifying its value to `1` grants access to the admin _Repair Management System_ page, representing a breach of the **Complete Mediation** principle:
 
@@ -95,7 +95,7 @@ With the gathered information, cookie manipulation is performed to bypass authen
 
 The `user` and `role` guest cookie parameters stored in the browser are modified with the _Access ID_ and name values of the super admin account. This allows access to the _Uploads_ page, where a file uploader is now visible.
 
-## Execution
+## **Execution**
 
 The next phase involves gaining initial access by uploading a [PHP reverse shell](https://github.com/BlackArch/webshells/blob/master/php/php-reverse-shell.php). The attacker prepares by downloading the reverse shell script and configuring it with the attacker's IP address and a listening port.
 
@@ -111,7 +111,7 @@ To enhance control and achieve full interactivity with the compromised system, t
 
 ![Photo of Netcat](images/netcat.png)
 
-## Credential Access
+## **Credential Access**
 
 In the lateral movement phase, the target host filesystem enumeration starts by exploring the `/var/www/html/` directory. Commonly utilized in Linux systems, especially in web server configurations such as Apache, the directory stores publicly accessible website files.
 
@@ -119,13 +119,13 @@ The command `cat * | grep -i passw*` is executed inside the `/var/www/html/cdn-c
 
 The next step involves examining the `/etc/passwd` file to identify system users, where an entry for the user `robert` is found.
 
-## Lateral Movement
+## **Lateral Movement**
 
 After gaining access through the execution of the `su robert` command using the discovered credentials, the contents of the `/home/robert/` directory are explored. Within this directory, further exploration uncovers a hidden secret, the user flag `user.txt`.
 
 ![Photo of Netcat Robert](images/netcat_robert.png)
 
-## Priviledge Escalation
+## **Priviledge Escalation**
 
 Attempting to run `sudo -l` results in a message indicating insufficient privileges for using `sudo`. The `id` command is used next to check the current user's group memberships, revealing that the user `robert` belongs to the `bugtracker` group.
 
@@ -155,7 +155,7 @@ The `bugtracker` file can now be exploited to gain shell access by utilizing the
 
 ![Photo of Netcat Root](images/netcat_root.png)
 
-## Exfiltration
+## **Exfiltration**
 
 Navigating to the `/root` directory grants access to the `root.txt` flag. The next step involves exfiltrating the root flag to the local machine.
 
