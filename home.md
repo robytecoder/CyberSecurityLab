@@ -60,9 +60,9 @@ Accessing the URL `http://{TARGET_IP}/cdn-cgi/login` leads to a login page that 
 
 ![Photo of Burp Suite](images/burpsuite.png)
 
-Note that the `user` and `role` cookie parameters correspond to the _Access ID_ and _Name_ fields found on the guest _Account_ page.
+Note that the `user` and `role` cookies correspond to the _Access ID_ and _Name_ fields found on the guest _Account_ page.
 
-## **Priviledge Escalation**
+## **Privilege Escalation**
 
 The query string in the _Account_ page URL contains a numeric `id` parameter. Modifying its value to `1` grants access to the admin _Repair Management System_ page, representing a breach of the **Complete Mediation** principle:
 
@@ -72,7 +72,7 @@ The query string in the _Account_ page URL contains a numeric `id` parameter. Mo
 
 To attempt exploiting the potential **IDOR vulnerability**, Burp Suite's Intruder can be utilized. The `/cdn-cgi/login/admin.php?content=accounts&id=2` resource is identified from Burp Suite's HTTP history and then sent to Intruder for testing.
 
-The `id` parameter value is chosen as the payload and a custom list of 50 sequential numbers is generated in the options. This method is intended to test the possibility of unauthorized access to other resources. By setting the request to always follow redirections and intercept _on_, the attack begins.
+The `id` value is chosen as the payload and a custom list of 50 sequential numbers is generated in the options. This method is intended to test the possibility of unauthorized access to other resources. By setting the request to always follow redirections and intercept _on_, the attack begins.
 
 ![Photo of Intruder](images/intruder.png)
 
@@ -93,11 +93,11 @@ With the gathered information, cookie manipulation is performed to bypass authen
 >
 > The system's authorization functionality does not prevent one user from gaining access to another user's data or record by modifying the key value identifying the data.
 
-The `user` and `role` guest cookie parameters stored in the browser are modified with the _Access ID_ and name values of the super admin account. This allows access to the _Uploads_ page, where a file uploader is now visible.
+The `user` and `role` guest cookies stored in the browser are modified with the _Access ID_ and _Name_ values of the super admin account. This allows access to the _Uploads_ page, where a file uploader is now visible.
 
 ## **Execution**
 
-The next phase involves gaining initial access by uploading a [PHP reverse shell](https://github.com/BlackArch/webshells/blob/master/php/php-reverse-shell.php). The attacker prepares by downloading the reverse shell script and configuring it with the attacker's IP address and a listening port.
+The next phase involves gaining access to Oopsie by uploading a [PHP reverse shell](https://github.com/BlackArch/webshells/blob/master/php/php-reverse-shell.php). The attacker prepares by downloading the reverse shell script and configuring it with the its own IP address and a listening port (e.g. `4444`).
 
 Once the script is uploaded, an attempt to access the `/uploads` resource results in a "forbidden" response. A Netcat listener is then initiated on the attacker's machine, ready to catch any incoming connections.
 
@@ -125,7 +125,7 @@ After gaining access through the execution of the `su robert` command using the 
 
 ![Photo of Netcat Robert](images/netcat_robert.png)
 
-## **Priviledge Escalation**
+## **Privilege Escalation**
 
 Attempting to run `sudo -l` results in a message indicating insufficient privileges for using `sudo`. The `id` command is used next to check the current user's group memberships, revealing that the user `robert` belongs to the `bugtracker` group.
 
